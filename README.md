@@ -16,6 +16,10 @@ So while it doesn't currently cover every endpoint (for example you cannot move 
 - 🔼 **Put** a file and upload it to the cloud
 - 📂 **Make a directory** on the cloud
 - 🗑 **Delete** a file or folder
+- ✏️ **Rename** a file or folder
+- 📦 **Move** files/folders to a new directory
+- 📋 **Copy** files/folders to a new directory
+- 🔍 **Walk** the directory tree recursively
 
 ## Installation
 
@@ -72,6 +76,22 @@ sncloud put /path/to/file.txt --parent /Notes
 
 # Delete a file
 sncloud rm /Notes/document.note
+
+# Rename a file or folder
+sncloud rename /Notes/old-name.note new-name.note
+
+# Move a file to another directory
+sncloud mv /Notes/document.note --destination /Archive
+
+# Move multiple files
+sncloud mv /Notes/a.note /Notes/b.note --destination /Archive
+
+# Copy a file to another directory
+sncloud cp /Notes/document.note --destination /Backup
+
+# Recursively list all files and folders
+sncloud walk
+sncloud walk /Notes
 ```
 
 The CLI will store your access token in `~/.config/sncloud/config.json` and automatically refresh it when needed.
