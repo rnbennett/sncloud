@@ -2,7 +2,7 @@ import click
 import json
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from sncloud.api import SNClient
 from sncloud.exceptions import AuthenticationError, ApiError
@@ -89,18 +89,43 @@ def login():
     """Login to Supernote Cloud and save access token."""
     email = click.prompt("Email")
     password = click.prompt("Password", hide_input=True)
-    
+
     client = SNClient()
     try:
         token = client.login(email, password)
-        config = {
-            "access_token": token
-        }
-        save_config(config)
+        save_config({"access_token": token})
         click.echo("Login successful")
+        return
     except AuthenticationError as e:
-        click.echo(f"Login failed: {str(e)}")
-        exit(1)
+        msg = str(e)
+        if not msg.startswith("__E1760__:"):
+            click.echo(f"Login failed: {msg}")
+            exit(1)
+        timestamp = msg.split(":", 1)[1]
+
+    # Identity verification loop — server has a ~120s OTP window.
+    # If sms/login returns E1760, the code expired; loop with new timestamp.
+    for attempt in range(3):
+        click.echo("Verification required. Sending code to your email...")
+        try:
+            valid_code_key = client.send_verification_code(email, timestamp)
+            otp = click.prompt("Enter the 6-digit verification code (enter within 2 minutes)")
+            token = client.verify_otp(email, otp, valid_code_key, timestamp)
+        except AuthenticationError as ve:
+            ve_msg = str(ve)
+            if ve_msg.startswith("__E1760__:"):
+                timestamp = ve_msg.split(":", 1)[1]
+                click.echo("Code expired. Requesting a new one...")
+                continue
+            click.echo(f"Verification failed: {ve_msg}")
+            exit(1)
+
+        save_config({"access_token": token})
+        click.echo("Login successful")
+        return
+
+    click.echo("Too many failed verification attempts")
+    exit(1)
 
 
 @cli.command()

@@ -47,10 +47,22 @@ def calc_md5(data: Union[str, bytes]) -> str:
 
 class SNClient:
     BASE_URL = "https://cloud.supernote.com/api"
+    _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
     def __init__(self):
         self._client = httpx.Client(timeout=60)
         self._access_token: Optional[str] = None
+        self._csrf_token: Optional[str] = None
+        self._fetch_csrf_token()
+
+    def _fetch_csrf_token(self) -> None:
+        """Fetch CSRF token from /api/csrf. Supernote requires X-XSRF-TOKEN on all requests."""
+        response = self._client.get(
+            f"{self.BASE_URL}/csrf",
+            headers={"User-Agent": self._UA},
+        )
+        response.raise_for_status()
+        self._csrf_token = response.headers.get("X-XSRF-TOKEN")
 
     def _api_call(self, endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -64,18 +76,31 @@ class SNClient:
             Dict containing the API response
 
         Raises:
-            requests.exceptions.RequestException: If the request fails
+            httpx.HTTPStatusError: If the request fails
         """
         headers = {
             "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36",
+            "User-Agent": self._UA,
         }
+        if self._csrf_token:
+            headers["X-XSRF-TOKEN"] = self._csrf_token
         if self._access_token:
             headers["x-access-token"] = self._access_token
 
         response = self._client.post(
             f"{self.BASE_URL}{endpoint}", json=payload, headers=headers
         )
+        # CSRF token expired mid-session — refresh and retry once
+        if response.status_code == 403:
+            self._fetch_csrf_token()
+            headers["X-XSRF-TOKEN"] = self._csrf_token
+            response = self._client.post(
+                f"{self.BASE_URL}{endpoint}", json=payload, headers=headers
+            )
+        # Server may rotate the CSRF token (e.g. after OTP verification) — keep in sync
+        new_csrf = self._client.cookies.get("XSRF-TOKEN")
+        if new_csrf:
+            self._csrf_token = new_csrf
         response.raise_for_status()
         return response.json()
 
@@ -99,6 +124,62 @@ class SNClient:
         if not data["success"]:
             raise ApiError("Failed to get random code")
         return (data["randomCode"], data["timestamp"])
+
+    def _extract_real_key(self, token: str) -> str:
+        """Extract signing key from pre-auth token (mirrors JS extractRealKey)."""
+        idx = int(token[-1])
+        parts = token.split("-")
+        return parts[idx]
+
+    def _pre_auth(self, email: str) -> dict:
+        """Call pre-auth endpoint to get a signing token."""
+        data = self._api_call(endpoints.pre_auth, {"account": email})
+        if not data.get("success"):
+            raise AuthenticationError("Pre-auth failed: " + data.get("errorMsg", ""))
+        return data
+
+    def send_verification_code(self, email: str, timestamp: str) -> str:
+        """Trigger sending of email OTP. Returns validCodeKey for verify_login."""
+        pre = self._pre_auth(email)
+        token = pre["token"]
+        key = self._extract_real_key(token)
+        sign = calc_sha256(email + key)
+        payload = {"email": email, "timestamp": int(timestamp), "token": token, "sign": sign}
+        data = self._api_call(endpoints.send_email_otp, payload)
+        if not data.get("success"):
+            raise AuthenticationError("Failed to send OTP: " + data.get("errorMsg", ""))
+        return data.get("validCodeKey", "")
+
+    def verify_otp(self, email: str, otp: str, valid_code_key: str, timestamp: str) -> str:
+        """Submit email OTP via /official/user/sms/login to establish an authenticated
+        session, then fetch the bearer token via /user/query/token.
+
+        Raises AuthenticationError on failure. The OTP expiry case (E1756/E0101) raises
+        AuthenticationError("__E1760__:timestamp") so the caller can restart the flow.
+        """
+        payload = {
+            "email": email,
+            "validCode": otp,
+            "validCodeKey": valid_code_key,
+            "timestamp": int(timestamp),
+            "browser": "Chrome107",
+            "equipment": "4",
+        }
+        data = self._api_call(endpoints.sms_login, payload)
+        if not data.get("success"):
+            error_code = data.get("errorCode", "")
+            error_msg = data.get("errorMsg", "")
+            if error_code in ("E1756", "E0101", "E1760"):
+                raise AuthenticationError("__E1760__:" + str(timestamp))
+            raise AuthenticationError("Verification failed: " + str(error_msg))
+
+        # sms/login established a cookie session — fetch the bearer token
+        token_data = self._api_call(endpoints.query_token, {})
+        token = token_data.get("token")
+        if not token:
+            raise AuthenticationError("sms/login succeeded but query/token returned no token")
+        return token
+
 
     def login(self, email: str, password: str) -> str:
         """
@@ -131,6 +212,9 @@ class SNClient:
 
         data = self._api_call(endpoints.login, payload)
         if not data["success"]:
+            if data.get("errorCode") == "E1760":
+                # Identity verification required — raise with timestamp so CLI can drive OTP flow
+                raise AuthenticationError("__E1760__:" + str(timestamp))
             raise AuthenticationError(data["errorMsg"])
         self._access_token = data["token"]
         return data["token"]

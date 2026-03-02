@@ -4,7 +4,7 @@ Unofficial Python API client that allows you to access your Supernote files thro
 
 `sncloud` is intended for integrating your Supernote Cloud files into other apps. Yes, there are other cloud providers integrated into the Supernote which are easier to develop for, but only the Supernote Cloud offer "auto sync" at the moment. The Supernote APIs are extensive but this library only covers the subset that most developers will need for common filesystem actions such as list, download and upload files.
 
-So while it doesn't currently cover every endpoint (for example you cannot delete, move or rename files) it will likely work for you. That said, PRs are weclome.
+So while it doesn't currently cover every endpoint (for example you cannot move or rename files) it will likely work for you. That said, PRs are welcome.
 
 ## Core Features
 
@@ -15,6 +15,7 @@ So while it doesn't currently cover every endpoint (for example you cannot delet
 - 🖼 **Get** a note file and convert it to PNG
 - 🔼 **Put** a file and upload it to the cloud
 - 📂 **Make a directory** on the cloud
+- 🗑 **Delete** a file or folder
 
 ## Installation
 
@@ -68,6 +69,9 @@ sncloud mkdir NewFolder --parent /Notes
 
 # Upload a file
 sncloud put /path/to/file.txt --parent /Notes
+
+# Delete a file
+sncloud rm /Notes/document.note
 ```
 
 The CLI will store your access token in `~/.config/sncloud/config.json` and automatically refresh it when needed.
