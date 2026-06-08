@@ -1,3 +1,13 @@
+> # 📦 This repository has moved
+>
+> Development continues at **[rnbennett/supernote-cloud](https://github.com/rnbennett/supernote-cloud)**, published on PyPI as [`supernote-cloud`](https://pypi.org/project/supernote-cloud/).
+>
+> ```bash
+> pip install supernote-cloud
+> ```
+>
+> This repository is archived and read-only.
+
 # Supernote Cloud API Client for Python
 
 Unofficial Python API client that allows you to access your Supernote files through the Supernote Cloud.
